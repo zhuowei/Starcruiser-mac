@@ -4,16 +4,18 @@ import Foundation
 let metaPsmServiceUuid = CBUUID(string: "fd5f")
 let metaPsmCharacteristicUuid = CBUUID(string: "05ACBE9F-6F61-4CA9-80BF-C8BBB52991C0")
 
-var myDeviceUuid: UUID! = nil
-do {
+func loadDeviceUuidMaybe() throws -> UUID? {
   let uuidString =
     try NSString(contentsOfFile: "device_uuid.txt", encoding: NSUTF8StringEncoding) as String
-  myDeviceUuid = UUID(uuidString: uuidString)
-} catch {}
+  return UUID(uuidString: uuidString)
+}
+
+var myDeviceUuid: UUID! = try? loadDeviceUuidMaybe()
 
 // 4 byte payload: 0x3 = error, error = 0xc001 (service_not_found)
 let hardcodedPacket: [UInt8] = [0x80, 0x04, 0x00, 0x01, 0x03, 0x00, 0xc0, 0x01]
 
+@main
 class Starcruiser: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, StreamDelegate {
   private let cbCentral = CBCentralManager()
   private var myPeripheral: CBPeripheral!
@@ -144,15 +146,19 @@ class Starcruiser: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, Str
       print("read \(readSize)")
       if readSize > 0 {
         print("in packet: \(inputBuffer[0..<readSize])")
+        let packetData = inputBuffer[0..<readSize]
         if readSize > 12 && inputBuffer[8] == 0x02 && inputBuffer[11] == 0x01 {
-          // TODO: zhuowei - dump the RequestEncryption protobuf
-          try! Data(inputBuffer[0..<readSize]).write(to: URL(filePath: "received.bin"))
+          let msg = try! Com_Oculus_Atc_RequestEncryption(
+            serializedBytes: Data(packetData[12...]))
+          print(msg)
         }
       }
       print(l2cap.inputStream.streamStatus.rawValue)
     }
   }
-}
 
-let starcruiser = Starcruiser()
-RunLoop.main.run()
+  static func main() {
+    let _ = Starcruiser()
+    RunLoop.main.run()
+  }
+}
