@@ -146,6 +146,7 @@ class Starcruiser: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, Str
         print("in packet: \(inputBuffer[0..<readSize])")
         if readSize > 12 && inputBuffer[8] == 0x02 && inputBuffer[11] == 0x01 {
           // TODO: zhuowei - dump the RequestEncryption protobuf
+          try! Data(inputBuffer[0..<readSize]).write(to: URL(filePath: "received.bin"))
         }
       }
       print(l2cap.inputStream.streamStatus.rawValue)
