@@ -23,8 +23,8 @@ class Datax: NSObject, StreamDelegate {
   private var encryptionNextIV = [UInt8](repeating: 0, count: 0x10)
   private var decryptionNextIV = [UInt8](repeating: 0, count: 0x10)
 
-  private var encryptionHmacBase: Int = 0
-  private var decryptionHmacBase: Int = 0
+  private var encryptionHmacBase: UInt32 = 0
+  private var decryptionHmacBase: UInt32 = 0
 
   init(inputStream: InputStream, outputStream: OutputStream) {
     self.inputStream = inputStream
@@ -188,7 +188,10 @@ class Datax: NSObject, StreamDelegate {
       seed: remoteEnableEncryptionMessage!.seed)
 
     encryptionNextIV = [UInt8](localEnableEncryptionMessage!.iv)
-    decryptionNextIV = [UInt8](localEnableEncryptionMessage!.iv)
+    decryptionNextIV = [UInt8](remoteEnableEncryptionMessage!.iv)
+
+    encryptionHmacBase = UInt32(localEnableEncryptionMessage!.base)
+    decryptionHmacBase = UInt32(remoteEnableEncryptionMessage!.base)
 
     // send first encrypted message...
     sendIdentityRequestPacket()
