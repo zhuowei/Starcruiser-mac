@@ -20,6 +20,7 @@ class Starcruiser: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, Str
   private let cbCentral = CBCentralManager()
   private var myPeripheral: CBPeripheral!
   private var l2cap: CBL2CAPChannel!
+  private var datax: Datax!
   override init() {
     super.init()
     cbCentral.delegate = self
@@ -120,45 +121,12 @@ class Starcruiser: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, Str
     }
     print("l2cap channel: \(channel)")
     l2cap = channel
-    channel.inputStream.delegate = self
-    channel.inputStream.schedule(in: RunLoop.main, forMode: .default)
-    channel.outputStream.delegate = self
-    channel.outputStream.schedule(in: RunLoop.main, forMode: .default)
-    channel.inputStream.open()
-    channel.outputStream.open()
-    // let's send some stuff on the l2cap link.
-    // we should be writing a RequestEncryption message here, but for now send an error...
-    let wroteLength = channel.outputStream.write(hardcodedPacket, maxLength: hardcodedPacket.count)
-    print("sent... \(wroteLength)")
-
-  }
-
-  func stream(
-    _ aStream: Stream,
-    handle eventCode: Stream.Event
-  ) {
-    print("input stream: \(eventCode)")
-    if aStream == l2cap.inputStream && eventCode == Stream.Event.hasBytesAvailable {
-      var inputBuffer = [UInt8](repeating: 0, count: 0x1000)
-      let readSize = inputBuffer.withUnsafeMutableBytes { buf in
-        l2cap.inputStream.read(buf.baseAddress!, maxLength: buf.count)
-      }
-      print("read \(readSize)")
-      if readSize > 0 {
-        print("in packet: \(inputBuffer[0..<readSize])")
-        let packetData = inputBuffer[0..<readSize]
-        if readSize > 12 && inputBuffer[8] == 0x02 && inputBuffer[11] == 0x01 {
-          let msg = try! Com_Oculus_Atc_RequestEncryption(
-            serializedBytes: Data(packetData[12...]))
-          print(msg)
-        }
-      }
-      print(l2cap.inputStream.streamStatus.rawValue)
-    }
+    datax = Datax(inputStream: channel.inputStream!, outputStream: channel.outputStream!)
   }
 
   static func main() {
-    let _ = Starcruiser()
+    let starcruiser = Starcruiser()
+    _ = starcruiser
     RunLoop.main.run()
   }
 }
