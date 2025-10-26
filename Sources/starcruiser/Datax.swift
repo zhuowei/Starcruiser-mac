@@ -171,7 +171,12 @@ class Datax: NSObject, StreamDelegate {
     request.seed = Data(repeating: 0x41, count: 0x20)  // TODO: zhuowei: randomly generate this
     request.iv = Data(repeating: 0x42, count: 0x10)  // TODO: zhuowei: randomly generate this
     request.base = 0x4142_4344  // TODO: zhuowei: randomly generate this
-    request.parameters = remoteRequestEncryptionMessage!.supportedParameters != 7 ? 31 : 7
+    let protocolVersion: Int32 =
+      !encryptionHasInitial40
+      ? 0 : (!multiplexingEnabled ? 7 : 31)
+    if protocolVersion != 0 {
+      request.parameters = protocolVersion
+    }
 
     localEnableEncryptionMessage = request
     let protoData: [UInt8] = try! request.serializedBytes()
