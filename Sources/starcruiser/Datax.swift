@@ -2,6 +2,12 @@ import CryptoExtras
 import CryptoKit
 import Foundation
 
+enum DataxProtocolVersion {
+  case protocolFlags0
+  case protocolFlags7
+  case protocolFlags31
+}
+
 // Implementation of Meta Ray-Bans' Airshield + Datax protocol.
 // WARNING: this implementation isn't actually secure and is trivial to bypass. Do not send actually private info through.
 class Datax: NSObject, StreamDelegate {
@@ -27,6 +33,7 @@ class Datax: NSObject, StreamDelegate {
   private var decryptionHmacBase: UInt32 = 0
 
   private var multiplexingEnabled = false
+  private var encryptionHasInitial40 = false
 
   init(inputStream: InputStream, outputStream: OutputStream) {
     self.inputStream = inputStream
@@ -59,7 +66,9 @@ class Datax: NSObject, StreamDelegate {
     let packetHmac = HMAC<SHA256>.authenticationCode(
       for: hmacHeader + hmacBase + encryptedDataWith00Header, using: encryptionHmacKey)
     encryptionHmacBase &+= 1
-    let outputPacketData: [UInt8] = [0x40] + [UInt8](packetHmac)[0..<8] + encryptedDataWith00Header
+    let outputPacketData: [UInt8] =
+      (encryptionHasInitial40 ? [0x40] : []) + [UInt8]([UInt8](packetHmac)[0..<8])
+      + encryptedDataWith00Header
     sendUnencrypted(data: outputPacketData)
   }
 
@@ -92,12 +101,12 @@ class Datax: NSObject, StreamDelegate {
     print("encrypted packet: \(data.hexString)")
     let hmacHeader: [UInt8] = multiplexingEnabled ? [0x02, 0x02, 0x00, 0x00] : []
     let hmacBase: [UInt8] = withUnsafeBytes(of: decryptionHmacBase) { [UInt8]($0) }
-    let hmacInput = hmacHeader + hmacBase + [UInt8](data[(1 + 8)...])
+    let hmacInput = hmacHeader + hmacBase + [UInt8](data[((encryptionHasInitial40 ? 1 : 0) + 8)...])
     let packetHmac = HMAC<SHA256>.authenticationCode(
       for: hmacInput, using: encryptionHmacKey)
     decryptionHmacBase &+= 1
     print("hmac: \(hexStringFor(packetHmac))")
-    let dataForDecryption = data[(1 + 8 + 1)...]
+    let dataForDecryption = data[((encryptionHasInitial40 ? 1 : 0) + 8 + 1)...]
     // TODO: zhuowei - reject invalid hmac
     let decryptedData = try! AES._CBC.decrypt(
       dataForDecryption, using: encryptionKey, iv: AES._CBC.IV(ivBytes: decryptionNextIV),
@@ -120,7 +129,9 @@ class Datax: NSObject, StreamDelegate {
       if readSize > 0 {
         print("in packet: \(inputBuffer[0..<readSize])")
         let packetData = [UInt8](inputBuffer[0..<readSize])
-        if packetData.count >= 1 + 8 + 1 && packetData[0] == 0x40 {
+        if decryptionKey != nil && packetData.count >= (encryptionHasInitial40 ? 1 : 0) + 8 + 1
+          && (!encryptionHasInitial40 || packetData[0] == 0x40)
+        {
           handleReceivedEncryptedPacket(data: packetData)
         } else {
           handleReceivedUnencryptedPacket(data: packetData)
@@ -160,7 +171,7 @@ class Datax: NSObject, StreamDelegate {
     request.seed = Data(repeating: 0x41, count: 0x20)  // TODO: zhuowei: randomly generate this
     request.iv = Data(repeating: 0x42, count: 0x10)  // TODO: zhuowei: randomly generate this
     request.base = 0x4142_4344  // TODO: zhuowei: randomly generate this
-    request.parameters = 31
+    request.parameters = remoteRequestEncryptionMessage!.supportedParameters != 7 ? 31 : 7
 
     localEnableEncryptionMessage = request
     let protoData: [UInt8] = try! request.serializedBytes()
@@ -172,23 +183,28 @@ class Datax: NSObject, StreamDelegate {
   }
 
   func handleEnableEncryption() {
-    multiplexingEnabled = remoteEnableEncryptionMessage!.parameters != 7
+    multiplexingEnabled = remoteEnableEncryptionMessage!.parameters == 31
+    encryptionHasInitial40 = remoteEnableEncryptionMessage!.parameters != 0
+    let protocolVersion: DataxProtocolVersion =
+      !encryptionHasInitial40
+      ? .protocolFlags0 : (!multiplexingEnabled ? .protocolFlags7 : .protocolFlags31)
+    print("multiplexingEnabled? \(multiplexingEnabled)")
     let sharedSecret = try! ecKey.sharedSecretFromKeyAgreement(
       with: try! P256.KeyAgreement.PublicKey(
         rawRepresentation: remoteEnableEncryptionMessage!.publicKey))
     print("dh: \(hexStringFor(sharedSecret))")
     encryptionKey = computeEncryptionKey(
       sharedSecret: sharedSecret, challenge: remoteRequestEncryptionMessage!.challenge,
-      seed: localEnableEncryptionMessage!.seed, multiplexingEnabled: multiplexingEnabled)
+      seed: localEnableEncryptionMessage!.seed, protocolVersion: protocolVersion)
     encryptionHmacKey = computeHmacKey(
       sharedSecret: sharedSecret, challenge: remoteRequestEncryptionMessage!.challenge,
-      seed: localEnableEncryptionMessage!.seed, multiplexingEnabled: multiplexingEnabled)
+      seed: localEnableEncryptionMessage!.seed, protocolVersion: protocolVersion)
     decryptionKey = computeEncryptionKey(
       sharedSecret: sharedSecret, challenge: localRequestEncryptionMessage!.challenge,
-      seed: remoteEnableEncryptionMessage!.seed, multiplexingEnabled: multiplexingEnabled)
+      seed: remoteEnableEncryptionMessage!.seed, protocolVersion: protocolVersion)
     decryptionHmacKey = computeHmacKey(
       sharedSecret: sharedSecret, challenge: localRequestEncryptionMessage!.challenge,
-      seed: remoteEnableEncryptionMessage!.seed, multiplexingEnabled: multiplexingEnabled)
+      seed: remoteEnableEncryptionMessage!.seed, protocolVersion: protocolVersion)
     print("encryptionKey: \(hexStringFor(encryptionKey))")
     print("encryptionHmacKey: \(hexStringFor(encryptionHmacKey))")
     print("decryptionKey: \(hexStringFor(decryptionKey))")
@@ -197,8 +213,8 @@ class Datax: NSObject, StreamDelegate {
     encryptionNextIV = [UInt8](localEnableEncryptionMessage!.iv)
     decryptionNextIV = [UInt8](remoteEnableEncryptionMessage!.iv)
 
-    encryptionHmacBase = UInt32(localEnableEncryptionMessage!.base)
-    decryptionHmacBase = UInt32(remoteEnableEncryptionMessage!.base)
+    encryptionHmacBase = localEnableEncryptionMessage!.base
+    decryptionHmacBase = remoteEnableEncryptionMessage!.base
 
     // send first encrypted message...
     sendIdentityRequestPacket()
@@ -222,10 +238,15 @@ func hexStringFor(_ key: ContiguousBytes) -> String {
 }
 
 func computeEncryptionKey(
-  sharedSecret: SharedSecret, challenge: Data, seed: Data, multiplexingEnabled: Bool
+  sharedSecret: SharedSecret, challenge: Data, seed: Data, protocolVersion: DataxProtocolVersion
 ) -> SymmetricKey {
+  let multiplexingEnabled = protocolVersion == .protocolFlags31
+  let hkdfEnabled = protocolVersion != .protocolFlags0
   let sharedSecretHash = Data(SHA256.hash(data: sharedSecret.withUnsafeBytes { Data($0) }))
   let salt = SHA256.hash(data: (multiplexingEnabled ? Data() : sharedSecretHash) + challenge + seed)
+  if !hkdfEnabled {
+    return SymmetricKey(data: salt)
+  }
   if !multiplexingEnabled {
     return HKDF<SHA256>.deriveKey(
       inputKeyMaterial: SymmetricKey(data: sharedSecretHash), salt: Data(salt),
@@ -236,8 +257,16 @@ func computeEncryptionKey(
 }
 
 func computeHmacKey(
-  sharedSecret: SharedSecret, challenge: Data, seed: Data, multiplexingEnabled: Bool
+  sharedSecret: SharedSecret, challenge: Data, seed: Data, protocolVersion: DataxProtocolVersion
 ) -> SymmetricKey {
+  let multiplexingEnabled = protocolVersion == .protocolFlags31
+  let hkdfEnabled = protocolVersion != .protocolFlags0
+  if !hkdfEnabled {
+    // the protocol with parameters unset uses the same key gen for encryption and hmac
+    return computeEncryptionKey(
+      sharedSecret: sharedSecret, challenge: challenge, seed: seed, protocolVersion: protocolVersion
+    )
+  }
   let sharedSecretHash = Data(SHA256.hash(data: sharedSecret.withUnsafeBytes { Data($0) }))
   let salt = SHA256.hash(
     data: seed + challenge + "hmac_derive".utf8 + (multiplexingEnabled ? Data() : sharedSecretHash))
