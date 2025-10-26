@@ -4,16 +4,18 @@ Right now it does nothing useful: it just prints the bytes of the single Request
 
 To use:
 
-`swiftc starcruiser.swift`
+```
+git submodule update --init
+./protogen.sh
+```
 
 If this is the first time, put the glasses into pairing mode.
 
-`./starcruiser`
+`swift run`
 
 It should print:
 
 ```
-$ ./starcruiser 
 central manager state update
 [<CBPeripheral: 0x106704ed0, identifier = 41414141-4141-4141-4141-414141414141, name = Meta RB Display 0053, mtu = 0, state = disconnected>]
 connected to peripheral <CBPeripheral: 0x106704ed0, identifier = 41414141-4141-4141-4141-414141414141, name = Meta RB Display 0053, mtu = 23, state = connected>

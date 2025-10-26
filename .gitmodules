@@ -1,0 +1,3 @@
+[submodule "external/SimStella"]
+	path = external/SimStella
+	url = https://github.com/zhuowei/SimStella.git
